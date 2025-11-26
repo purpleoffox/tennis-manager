@@ -3,11 +3,10 @@ import pandas as pd
 import random
 import json
 import os
-import datetime
 from typing import List
 
 # ==========================================
-# [S] Core Data Structures (기존 로직 동일)
+# [S] Core Data Structures
 # ==========================================
 
 class Player:
@@ -64,7 +63,7 @@ class Match:
         }
 
 # ==========================================
-# [M] Logic Modules (기존 로직 동일)
+# [M] Logic Modules
 # ==========================================
 
 class SchedulerEngine:
@@ -85,7 +84,6 @@ class SchedulerEngine:
         total_matches = (len(self.players) * games_per_player) // 4
         new_matches = []
         
-        # 임시 초기화 (스케줄링용)
         for p in self.players:
             p.games_played = 0
 
@@ -116,40 +114,13 @@ class SchedulerEngine:
                 p4.record_match_relations(p3, p1, p2)
                 new_matches.append(Match(i + 1, [p1, p2], [p3, p4]))
         
-        # 실제 게임용 초기화
         for p in self.players: p.games_played = 0
         return new_matches
 
 def save_data(filename, players, matches, n_games):
-    data = {
-        "n_games": n_games,
-        "players": [p.to_dict() for p in players],
-        "matches": [m.to_dict() for m in matches]
-    }
-    with open(filename, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-def load_data(filename):
-    if not os.path.exists(filename): return None, None, None
-    with open(filename, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    
-    players = []
-    player_map = {}
-    for p_data in data["players"]:
-        p = Player.from_dict(p_data)
-        players.append(p)
-        player_map[p.name] = p
-    
-    matches = []
-    for m_data in data["matches"]:
-        team_a = [player_map[name] for name in m_data["team_a_names"]]
-        team_b = [player_map[name] for name in m_data["team_b_names"]]
-        m = Match(m_data["id"], team_a, team_b)
-        m.result = tuple(m_data["result"])
-        m.is_finished = m_data["is_finished"]
-        matches.append(m)
-    return players, matches, data["n_games"]
+    # Streamlit Cloud에서는 파일 저장이 휘발성입니다. 
+    # 하지만 세션 유지를 위해 기능은 남겨둡니다.
+    pass 
 
 # ==========================================
 # [UI] Streamlit Interface
@@ -157,7 +128,6 @@ def load_data(filename):
 
 st.set_page_config(page_title="Tennis Mix Match", page_icon="🎾", layout="wide")
 
-# --- 상태 관리 (Session State) ---
 if 'players' not in st.session_state:
     st.session_state.players = []
 if 'matches' not in st.session_state:
@@ -167,27 +137,8 @@ if 'n_games' not in st.session_state:
 if 'system_ready' not in st.session_state:
     st.session_state.system_ready = False
 
-SAVE_FILE = "tennis_save.json"
-
-# --- 사이드바: 설정 및 저장 ---
 with st.sidebar:
     st.header("⚙️ 대회 설정")
-    
-    # 불러오기 버튼
-    if os.path.exists(SAVE_FILE):
-        if st.button("📂 저장된 게임 불러오기"):
-            p, m, n = load_data(SAVE_FILE)
-            if p:
-                st.session_state.players = p
-                st.session_state.matches = m
-                st.session_state.n_games = n
-                st.session_state.system_ready = True
-                st.success("게임을 불러왔습니다!")
-                st.rerun()
-
-    st.divider()
-
-    # 새로 시작하기
     st.subheader("새 대회 시작")
     input_names = st.text_area("참가자 이름 (쉼표로 구분)", "A, B, C, D, E, F, G, H")
     input_n = st.number_input("인당 게임 수", min_value=1, value=4)
@@ -197,9 +148,8 @@ with st.sidebar:
         total_slots = len(names_list) * input_n
         
         if total_slots % 4 != 0:
-            st.error(f"총 슬롯({total_slots})이 4의 배수가 아닙니다. 인원이나 게임 수를 조정하세요.")
+            st.error(f"총 슬롯({total_slots})이 4의 배수가 아닙니다.")
         else:
-            # 초기화 및 생성
             players = [Player(name) for name in names_list]
             scheduler = SchedulerEngine(players)
             matches = scheduler.generate_schedule(input_n)
@@ -211,104 +161,52 @@ with st.sidebar:
             st.success("대진표가 생성되었습니다!")
             st.rerun()
 
-    st.divider()
-    if st.session_state.system_ready:
-        if st.button("💾 현재 상태 저장"):
-            save_data(SAVE_FILE, st.session_state.players, st.session_state.matches, st.session_state.n_games)
-            st.success("저장 완료!")
-
-# --- 메인 화면 ---
 st.title("🎾 테니스 복식 대회 매니저")
 
 if not st.session_state.system_ready:
     st.info("👈 왼쪽 사이드바에서 대회를 설정하고 '대진표 생성'을 눌러주세요.")
 else:
-    # 탭 구성
     tab1, tab2, tab3 = st.tabs(["📝 경기 결과 입력", "📊 실시간 순위", "📅 전체 대진표"])
 
-    # [탭 1] 경기 결과 입력
     with tab1:
         st.subheader("경기 결과 입력")
-        
-        # 진행되지 않은 경기만 필터링
         pending_matches = [m for m in st.session_state.matches if not m.is_finished]
-        finished_matches = [m for m in st.session_state.matches if m.is_finished]
         
         if not pending_matches:
             st.balloons()
             st.success("모든 경기가 종료되었습니다! 🎉")
         else:
-            # 선택 박스에 표시할 문자열 생성
             match_options = {f"Match {m.id}: {m.team_a[0].name}/{m.team_a[1].name} vs {m.team_b[0].name}/{m.team_b[1].name}": m for m in pending_matches}
             selected_option = st.selectbox("진행할 경기를 선택하세요:", list(match_options.keys()))
             
             if selected_option:
                 target_match = match_options[selected_option]
-                
-                col1, col2, col3 = st.columns([2, 2, 1])
-                with col1:
-                    score_a = st.number_input(f"Team A ({target_match.team_a[0].name}, {target_match.team_a[1].name}) 점수", min_value=0, step=1, key="sa")
-                with col2:
-                    score_b = st.number_input(f"Team B ({target_match.team_b[0].name}, {target_match.team_b[1].name}) 점수", min_value=0, step=1, key="sb")
-                with col3:
-                    st.write(" ") # 여백용
+                c1, c2, c3 = st.columns([2, 2, 1])
+                with c1:
+                    sa = st.number_input("Team A 점수", min_value=0, step=1, key="sa")
+                with c2:
+                    sb = st.number_input("Team B 점수", min_value=0, step=1, key="sb")
+                with c3:
                     st.write(" ")
-                    if st.button("입력 완료", type="primary"):
-                        # 로직 업데이트
-                        target_match.result = (score_a, score_b)
+                    st.write(" ")
+                    if st.button("입력", type="primary"):
+                        target_match.result = (sa, sb)
                         target_match.is_finished = True
-                        
-                        diff = abs(score_a - score_b)
-                        team_a_won = score_a > score_b
-                        
-                        for p in target_match.team_a:
-                            p.update_stat(team_a_won, diff if team_a_won else -diff)
-                        for p in target_match.team_b:
-                            p.update_stat(not team_a_won, diff if not team_a_won else -diff)
-                            
-                        # 자동 저장
-                        save_data(SAVE_FILE, st.session_state.players, st.session_state.matches, st.session_state.n_games)
-                        st.success(f"Match {target_match.id} 입력 완료!")
+                        diff = abs(sa - sb)
+                        team_a_won = sa > sb
+                        for p in target_match.team_a: p.update_stat(team_a_won, diff if team_a_won else -diff)
+                        for p in target_match.team_b: p.update_stat(not team_a_won, diff if not team_a_won else -diff)
+                        st.success("저장됨!")
                         st.rerun()
 
-    # [탭 2] 순위표
     with tab2:
-        st.subheader("🏆 실시간 랭킹")
-        # DataFrame으로 변환하여 예쁘게 출력
-        rank_data = []
-        for p in st.session_state.players:
-            rank_data.append({
-                "이름": p.name,
-                "승": p.stats["wins"],
-                "패": p.stats["losses"],
-                "득실차": p.stats["score_diff"],
-                "경기수": p.games_played
-            })
-        
+        rank_data = [{"이름": p.name, "승": p.stats["wins"], "득실": p.stats["score_diff"], "경기": p.games_played} for p in st.session_state.players]
         if rank_data:
-            df_rank = pd.DataFrame(rank_data)
-            # 정렬 (승 -> 득실차 -> 이름)
-            df_rank = df_rank.sort_values(by=["승", "득실차"], ascending=[False, False]).reset_index(drop=True)
-            df_rank.index += 1 # 1위부터 시작
-            st.dataframe(df_rank, use_container_width=True)
+            df = pd.DataFrame(rank_data).sort_values(by=["승", "득실"], ascending=[False, False])
+            df.index += 1
+            st.dataframe(df, use_container_width=True)
 
-    # [탭 3] 대진표
     with tab3:
-        st.subheader("📅 전체 경기 일정")
-        
-        schedule_data = []
-        for m in st.session_state.matches:
-            status = f"{m.result[0]} : {m.result[1]}" if m.is_finished else "대기중"
-            schedule_data.append({
-                "No": m.id,
-                "Team A": f"{m.team_a[0].name}, {m.team_a[1].name}",
-                "결과": status,
-                "Team B": f"{m.team_b[0].name}, {m.team_b[1].name}",
-                "상태": "종료" if m.is_finished else "진행전"
-            })
-            
-        if schedule_data:
-            df_schedule = pd.DataFrame(schedule_data)
-            
-            # 스타일링 (종료된 경기는 색칠하고 싶지만 Streamlit 기본 표 사용)
-            st.dataframe(df_schedule, use_container_width=True)
+        sch_data = [{"No": m.id, "Team A": f"{m.team_a[0].name},{m.team_a[1].name}", "점수": f"{m.result[0]}:{m.result[1]}" if m.is_finished else "-", "Team B": f"{m.team_b[0].name},{m.team_b[1].name}"} for m in st.session_state.matches]
+        if sch_data:
+            st.dataframe(pd.DataFrame(sch_data), use_container_width=True)
